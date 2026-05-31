@@ -1,8 +1,1 @@
-# Exclude credentials and environment configurations
-.env
-config.env
-*.local
-credentials.json
 
-# Exclude local testing directory
-tests/

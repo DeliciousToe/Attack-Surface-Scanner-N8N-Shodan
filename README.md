@@ -69,7 +69,6 @@ To avoid duplicate notification spam, both workflows store history directly insi
 ### Step 2: Configure Credentials (Production versions only)
 1.  Double-click the **Shodan Host Lookup** node (and the **Shodan Domain DNS Lookup** node in the domain workflow).
 2.  Under **Query Parameters**, replace the placeholder `YOUR_SHODAN_API_KEY` with your Shodan API Key.
-    > *Your key has already been added to the local `config.env.example` file for safe reference.*
 
 ### Step 3: Configure Notifications
 1.  Double-click the **Discord Alert** node.

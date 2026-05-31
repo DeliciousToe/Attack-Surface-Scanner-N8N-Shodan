@@ -1,0 +1,262 @@
+{
+  "name": "Domain Attack Surface Monitor",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "4d79267e-5990-4081-b126-942fa189161d",
+      "name": "When clicking \"Test workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1216,
+        32
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "66c5853d-16bb-4748-9aaf-33cdba9bef12",
+      "name": "Schedule Trigger (Daily)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1216,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "targets",
+              "value": "8.8.8.8"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9eb275e2-a73e-46a2-8f4d-5ed4fd8bbdb4",
+      "name": "Define Targets",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const targetsString = $json.targets || '';\nconst ipList = targetsString.split(',').map(ip => ip.trim()).filter(ip => ip.length > 0);\nreturn ipList.map(ip => ({ json: { ip } }));"
+      },
+      "id": "4d1eb332-a130-49b1-99f5-de1d975516d1",
+      "name": "Parse Target IPs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.shodan.io/shodan/host/{{ $json.ip }}?key=PASTE_YOUR_API_HERE",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "PASTE_YOUR_API_HERE"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d64c2168-86e8-47ae-857c-6bd0f6c51f3a",
+      "name": "Shodan Host Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -608,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get persistent workflow static data\nconst staticData = $getWorkflowStaticData('global');\n\n// Initialize history if not already present\nif (!staticData.history) {\n  staticData.history = {};\n}\n\n// Parse current response\nconst ip = $node[\"Parse Target IPs\"].json.ip;\nconst shodanData = $json.body || {};\nconst error = $json.error;\n\nlet currentPorts = [];\nlet currentVulns = [];\n\nif (!error && shodanData.ports) {\n  currentPorts = shodanData.ports;\n  currentVulns = shodanData.vulns || [];\n}\n\n// Retrieve baseline state\nconst lastState = staticData.history[ip] || { ports: [], vulns: [] };\n\n// Risk profile parameters\nconst highRiskPorts = [21, 22, 23, 80, 443, 445, 3389, 8080];\n\n// Calculate new exposures\nconst newPorts = currentPorts.filter(port => !lastState.ports.includes(port) && highRiskPorts.includes(port));\nconst newVulns = currentVulns.filter(vuln => !lastState.vulns.includes(vuln));\n\nconst hasThreat = newPorts.length > 0 || newVulns.length > 0;\n\n// Update state for next run\nstaticData.history[ip] = {\n  ports: currentPorts,\n  vulns: currentVulns\n};\n\nreturn {\n  json: {\n    ip,\n    hasThreat,\n    newPorts,\n    newVulns,\n    allPorts: currentPorts,\n    allVulns: currentVulns\n  }\n};"
+      },
+      "id": "0d2dd5ae-3f4e-426d-a9f8-f0fc68f5268c",
+      "name": "Diff & Filter Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "threat-check",
+              "leftValue": "={{ $json.hasThreat }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "73b5a86a-4f4f-4b9f-8832-670548367aae",
+      "name": "If New Threat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_DISCORD_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"🚨 {{ $json.ip }} Threat Alert\",\n      \"color\": 15158332,\n      \"fields\": [\n        {\n          \"name\": \"🎯 Target Asset\",\n          \"value\": \"`{{ $json.ip }}`\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"🔥 Newly Exposed Ports\",\n          \"value\": \"{{ $json.newPorts.length > 0 ? $json.newPorts.join(', ') : 'None' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"🛡️ Newly Detected CVEs\",\n          \"value\": \"{{ $json.newVulns.length > 0 ? $json.newVulns.join(', ') : 'None' }}\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"🛠️ Actionable Recommendation\",\n          \"value\": \"Verify if the newly open ports are required. If not, block them via firewall or restrict access behind a VPN. Patch software corresponding to detected CVEs immediately.\",\n          \"inline\": false\n        }\n      ],\n      \"timestamp\": \"{{ new Date().toISOString() }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "d0452a4a-8556-48f1-9357-8d6b826eaa99",
+      "name": "Discord Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        96,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## WHAT YOU NEED TO CHANGE \n1. Define Tartegs: Change for your desired IPs\n2. Shodan Host Lookup: Paste your Shodan API key (requires paid membership)\n3. Discord Alert: Paste your webhook URL",
+        "height": 144,
+        "width": 416
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -176
+      ],
+      "id": "c89f6ff5-3918-4a1d-8400-093c54869b19",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking \"Test workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Define Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Daily)": {
+      "main": [
+        [
+          {
+            "node": "Define Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Targets": {
+      "main": [
+        [
+          {
+            "node": "Parse Target IPs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Target IPs": {
+      "main": [
+        [
+          {
+            "node": "Shodan Host Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shodan Host Lookup": {
+      "main": [
+        [
+          {
+            "node": "Diff & Filter Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diff & Filter Engine": {
+      "main": [
+        [
+          {
+            "node": "If New Threat?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If New Threat?": {
+      "main": [
+        [
+          {
+            "node": "Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "39a7aecd-12f4-4966-b2e0-966451863a92",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b442e40fe32dc8fd6a31bed3b27df7767976fb3a6a62af8fdb5f9305df3ef5df"
+  },
+  "id": "6wx0LxWlP4pK77C4",
+  "tags": []
+}
